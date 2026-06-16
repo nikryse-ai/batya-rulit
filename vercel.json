@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/check-camera.js": {
+      "maxDuration": 30
+    }
+  }
+}
