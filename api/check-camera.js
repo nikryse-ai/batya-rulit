@@ -7,6 +7,9 @@ export default async function handler(req, res) {
     return res.status(405).json({ message: 'Method not allowed' });
   }
 
+  console.log('Content-Type:', req.headers['content-type']);
+  console.log('Body raw:', JSON.stringify(req.body));
+
   const { vin } = req.body ?? {};
 
   if (!vin || !VIN_RE.test(vin)) {
