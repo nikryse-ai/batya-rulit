@@ -5,7 +5,7 @@ const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/i;
 const CAMERA_RE = /camera|камер/i;
 // "камера" ловит и сопутствующие детали (кожух/крышка, кронштейн, блок управления, аксессуары) — это не сама камера
 const CAMERA_EXCLUDE_RE = /кожух|крышка|чехол|переходник|разъ[её]м|провод|кабель|жгут|кронштейн|эбу|блок управлен|экшен/i;
-// Нужна камера ЗАДНЕГО вида — исключаем однозначно переднюю, если есть более подходящий вариант
+// Нужна камера ПЕРЕДНЕГО вида — исключаем однозначно заднюю, если есть более подходящий вариант
 const REAR_RE = /задн|rear/i;
 const FRONT_RE = /передн|front/i;
 
@@ -29,18 +29,18 @@ export default async function handler(req, res) {
 
     const results = await searchVehicleDetails(vehicle.catalog, vehicle.ssd, vehicle.vehicleId, 'camera');
     const candidates = results.filter(r => CAMERA_RE.test(r.name) && !CAMERA_EXCLUDE_RE.test(r.name));
-    // Явно задние — приоритет. Если таких нет, берём безадресные ("Камера" без уточнения стороны).
-    // НЕ откатываемся на однозначно переднюю деталь и не на нефильтрованный сырой результат —
-    // так не подсовываем клиенту артикул не того элемента.
-    const rearExplicit = candidates.filter(r => REAR_RE.test(r.name));
+    // Явно передние — приоритет. Если таких нет, берём безадресные ("Камера" без уточнения стороны).
+    // НЕ откатываемся на однозначно заднюю деталь и не на нефильтрованный сырой результат —
+    // так не подсовываем клиенту артикул задней камеры под видом передней (напр. Solaris — только задняя в каталоге).
+    const frontExplicit = candidates.filter(r => FRONT_RE.test(r.name));
     const ambiguous = candidates.filter(r => !REAR_RE.test(r.name) && !FRONT_RE.test(r.name));
-    const camera = rearExplicit[0] ?? ambiguous[0] ?? null;
+    const camera = frontExplicit[0] ?? ambiguous[0] ?? null;
 
     if (!camera) {
       return res.json({
         found: false,
         car_name: `${vehicle.brand} ${vehicle.name}`,
-        message: 'Камера заднего вида для этого автомобиля не найдена в каталоге производителя.'
+        message: 'Камера переднего вида для этого автомобиля не найдена в каталоге производителя.'
       });
     }
 
