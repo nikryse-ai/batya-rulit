@@ -1,4 +1,6 @@
 import { findVehicle, searchVehicleDetails, searchWithFallback } from '../lib/laximo.js';
+import { matchOemAgainstSheets } from '../lib/ai-match.js';
+import { SHEETS } from '../lib/sheets.js';
 
 // BMW/Mercedes, нештатная (Android) магнитола: клиенту нужна ЗАДНЯЯ камера + OE-номер
 // штатной магнитолы (чтобы позже свериться с таблицей совместимости — логика таблицы отдельно).
@@ -57,14 +59,24 @@ export default async function handler(req, res) {
       HEADUNIT_QUERIES, HEADUNIT_INCLUDE_RE, HEADUNIT_EXCLUDE_RE
     );
 
+    const decoder = headunit
+      ? await matchOemAgainstSheets({
+          oe: headunit.oem,
+          sheetNames: [SHEETS.BMW_MERCEDES_DECODER],
+          resultKind: 'decoder'
+        })
+      : null;
+
     return res.json({
       found: true,
       car_name: `${vehicle.brand} ${vehicle.name}`,
       camera: camera ? { oem: camera.oem, part_name: camera.name } : null,
       headunit: headunit ? { oem: headunit.oem, part_name: headunit.name } : null,
+      decoder,
       message: [
         camera ? `Камера заднего вида: ${camera.oem} — ${camera.name}` : 'Камера заднего вида не найдена в каталоге производителя.',
         headunit ? `Штатная магнитола: ${headunit.oem} — ${headunit.name}` : 'Штатная магнитола не определена в каталоге по этому VIN.',
+        decoder ? decoder.message : null,
         `Автомобиль: ${vehicle.brand} ${vehicle.name}`
       ].filter(Boolean).join('\n')
     });

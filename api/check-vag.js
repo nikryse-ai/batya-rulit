@@ -1,4 +1,6 @@
 import { findVehicle, searchVehicleDetails, searchWithFallback } from '../lib/laximo.js';
+import { matchOemAgainstSheets } from '../lib/ai-match.js';
+import { SHEETS } from '../lib/sheets.js';
 
 const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/i;
 const TRUNK_RE = /багажн|luggage|trunk|tailgate|deck ?lid/i;
@@ -54,14 +56,24 @@ export default async function handler(req, res) {
     const cleanHandles = trunkItems.filter(r => !KIT_RE.test(r.name));
     const trunkHandles = (cleanHandles.length ? cleanHandles : trunkItems).slice(0, 4);
 
+    const availability = radio
+      ? await matchOemAgainstSheets({
+          oe: radio.oem,
+          sheetNames: [SHEETS.VAG, SHEETS.ALL_PRODUCTS],
+          resultKind: 'availability'
+        })
+      : null;
+
     return res.json({
       found: true,
       car_name: `${vehicle.brand} ${vehicle.name}`,
       radio: radio ? { oem: radio.oem, part_name: radio.name } : null,
       platform,
       trunk_handle_variants: trunkHandles.map(h => ({ oem: h.oem, part_name: h.name })),
+      availability,
       message: [
         radio ? `Магнитола: ${radio.oem} — ${radio.name}` : 'Магнитола не определена в каталоге по этому VIN.',
+        availability ? availability.message : null,
         platform ? `Платформа: ${platform}` : null,
         trunkHandles.length
           ? `Варианты ручки/кнопки багажника:\n${trunkHandles.map(h => `${h.oem} — ${h.part_name ?? h.name}`).join('\n')}`

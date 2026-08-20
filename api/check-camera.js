@@ -1,4 +1,6 @@
 import { findVehicle, searchVehicleDetails } from '../lib/laximo.js';
+import { matchOemAgainstSheets } from '../lib/ai-match.js';
+import { SHEETS } from '../lib/sheets.js';
 
 const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/i;
 // В разных каталогах деталь называется то "видеокамера", то просто "камера" — ловим оба варианта
@@ -46,12 +48,22 @@ export default async function handler(req, res) {
       });
     }
 
+    const availability = await matchOemAgainstSheets({
+      oe: camera.oem,
+      sheetNames: [SHEETS.STANDARD, SHEETS.ALL_PRODUCTS, SHEETS.STANDARD_FALLBACK],
+      resultKind: 'availability'
+    });
+
     return res.json({
       found: true,
       oem: camera.oem,
       part_name: camera.name,
       car_name: `${vehicle.brand} ${vehicle.name}`,
-      message: `OEM артикул камеры: ${camera.oem}. Деталь: ${camera.name}. Автомобиль: ${vehicle.brand} ${vehicle.name}.`
+      availability,
+      message: [
+        `OEM артикул камеры: ${camera.oem}. Деталь: ${camera.name}. Автомобиль: ${vehicle.brand} ${vehicle.name}.`,
+        availability.message
+      ].join(' ')
     });
   } catch (err) {
     console.error(err);

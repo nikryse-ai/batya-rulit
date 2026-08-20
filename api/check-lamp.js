@@ -1,4 +1,6 @@
 import { findVehicle, searchWithFallback } from '../lib/laximo.js';
+import { matchOemAgainstSheets } from '../lib/ai-match.js';
+import { SHEETS } from '../lib/sheets.js';
 
 const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/i;
 const PLATE_RE = /номер/i;
@@ -26,12 +28,21 @@ export default async function handler(req, res) {
 
     const plate = await searchWithFallback(vehicle.catalog, vehicle.ssd, vehicle.vehicleId, PLATE_QUERIES, PLATE_RE);
 
+    const availability = plate
+      ? await matchOemAgainstSheets({
+          oe: plate.oem,
+          sheetNames: [SHEETS.HS_LAMP, SHEETS.ALL_PRODUCTS],
+          resultKind: 'availability'
+        })
+      : null;
+
     return res.json({
       found: Boolean(plate),
       car_name: `${vehicle.brand} ${vehicle.name}`,
       plate_lamp: plate ? { oem: plate.oem, part_name: plate.name } : null,
+      availability,
       message: plate
-        ? `Подсветка номера: ${plate.oem} — ${plate.name}`
+        ? [`Подсветка номера: ${plate.oem} — ${plate.name}`, availability.message].join(' ')
         : 'Плафон подсветки номера для этого автомобиля не найден в каталоге производителя.'
     });
   } catch (err) {

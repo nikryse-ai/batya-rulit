@@ -1,4 +1,6 @@
 import { findVehicle, searchVehicleDetails } from '../lib/laximo.js';
+import { matchOemAgainstSheets } from '../lib/ai-match.js';
+import { SHEETS } from '../lib/sheets.js';
 
 const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/i;
 const TRUNK_RE = /багажн|luggage|trunk|tailgate|deck ?lid/i; // корень "багажн" — ловит и "багажника", и "багажного отсека"
@@ -28,12 +30,21 @@ export default async function handler(req, res) {
     const clean = trunkItems.filter(r => !KIT_RE.test(r.name));
     const handles = clean.length ? clean : trunkItems; // если остались только ремкомплекты — лучше их, чем ничего
 
+    const availability = handles.length
+      ? await matchOemAgainstSheets({
+          oe: handles[0].oem,
+          sheetNames: [SHEETS.FORD_HANDLE, SHEETS.ALL_PRODUCTS],
+          resultKind: 'availability'
+        })
+      : null;
+
     return res.json({
       found: handles.length > 0,
       car_name: `${vehicle.brand} ${vehicle.name}`,
       handles: handles.map(h => ({ oem: h.oem, part_name: h.name })),
+      availability,
       message: handles.length
-        ? handles.map(h => `${h.oem} — ${h.name}`).join('\n')
+        ? [handles.map(h => `${h.oem} — ${h.name}`).join('\n'), availability.message].join('\n')
         : 'У этого автомобиля ручка/кнопка багажника не выделена отдельной деталью в каталоге (крышка открывается замком/кнопкой без отдельной ручки, либо не входит в этот раздел каталога).'
     });
   } catch (err) {
