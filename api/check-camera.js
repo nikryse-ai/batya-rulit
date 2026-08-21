@@ -1,5 +1,6 @@
 import { findVehicle, searchVehicleDetails } from '../lib/laximo.js';
 import { matchOemAgainstSheets } from '../lib/ai-match.js';
+import { findVehiclePartsViaAI } from '../lib/ai-vin-lookup.js';
 import { SHEETS } from '../lib/sheets.js';
 
 const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/i;
@@ -13,6 +14,8 @@ const CAMERA_EXCLUDE_RE = /кожух|крышка|чехол|переходни
 const REAR_RE = /задн|rear/i;
 const FRONT_RE = /передн|front/i;
 
+const AI_PART_DESC = 'камера заднего вида для штатной мультимедийной системы (не декоративная накладка/кожух/кронштейн — сама камера с видеосигналом)';
+
 export default async function handler(req, res) {
   const { vin } = req.body ?? {};
 
@@ -24,27 +27,40 @@ export default async function handler(req, res) {
   }
 
   try {
+    let carName, camera, viaAI = false;
+
     const vehicles = await findVehicle(vin);
     const vehicle = vehicles?.[0];
 
-    if (!vehicle) {
-      return res.json({ found: false, message: 'Автомобиль по этому VIN не найден в каталоге.' });
-    }
+    if (vehicle) {
+      carName = `${vehicle.brand} ${vehicle.name}`;
 
-    const results = await searchVehicleDetails(vehicle.catalog, vehicle.ssd, vehicle.vehicleId, 'camera');
-    const candidates = results.filter(r => CAMERA_RE.test(r.name) && !CAMERA_EXCLUDE_RE.test(r.name));
-    // Явно задние — приоритет. Если таких нет, берём безадресные ("Камера" без уточнения стороны).
-    // НЕ откатываемся на однозначно переднюю деталь и не на нефильтрованный сырой результат —
-    // так не подсовываем клиенту артикул не того элемента.
-    const rearExplicit = candidates.filter(r => REAR_RE.test(r.name));
-    const ambiguous = candidates.filter(r => !REAR_RE.test(r.name) && !FRONT_RE.test(r.name));
-    const camera = rearExplicit[0] ?? ambiguous[0] ?? null;
+      const results = await searchVehicleDetails(vehicle.catalog, vehicle.ssd, vehicle.vehicleId, 'camera');
+      const candidates = results.filter(r => CAMERA_RE.test(r.name) && !CAMERA_EXCLUDE_RE.test(r.name));
+      // Явно задние — приоритет. Если таких нет, берём безадресные ("Камера" без уточнения стороны).
+      // НЕ откатываемся на однозначно переднюю деталь и не на нефильтрованный сырой результат —
+      // так не подсовываем клиенту артикул не того элемента.
+      const rearExplicit = candidates.filter(r => REAR_RE.test(r.name));
+      const ambiguous = candidates.filter(r => !REAR_RE.test(r.name) && !FRONT_RE.test(r.name));
+      const found = rearExplicit[0] ?? ambiguous[0] ?? null;
+      if (found) camera = { oem: found.oem, name: found.name };
+    } else {
+      // Laximo не распознал VIN (не покрывает рынок/год) — пробуем через ИИ с веб-поиском
+      const ai = await findVehiclePartsViaAI(vin, [{ key: 'camera', description: AI_PART_DESC }]);
+      if (ai?.parts?.camera?.oem) {
+        carName = ai.carName;
+        camera = { oem: ai.parts.camera.oem, name: ai.parts.camera.part_name };
+        viaAI = true;
+      }
+    }
 
     if (!camera) {
       return res.json({
         found: false,
-        car_name: `${vehicle.brand} ${vehicle.name}`,
-        message: 'Камера заднего вида для этого автомобиля не найдена в каталоге производителя.'
+        car_name: carName,
+        message: carName
+          ? 'Камера заднего вида для этого автомобиля не найдена в каталоге производителя.'
+          : 'Автомобиль по этому VIN не найден в каталоге производителя, и определить его через ИИ тоже не удалось.'
       });
     }
 
@@ -58,12 +74,14 @@ export default async function handler(req, res) {
       found: true,
       oem: camera.oem,
       part_name: camera.name,
-      car_name: `${vehicle.brand} ${vehicle.name}`,
+      car_name: carName,
+      source: viaAI ? 'ai_fallback' : 'laximo',
       availability,
       message: [
-        `OEM артикул камеры: ${camera.oem}. Деталь: ${camera.name}. Автомобиль: ${vehicle.brand} ${vehicle.name}.`,
+        viaAI ? 'Автомобиль не найден в официальном каталоге — деталь определена через ИИ приблизительно, точность ниже обычной.' : null,
+        `OEM артикул камеры: ${camera.oem}. Деталь: ${camera.name}. Автомобиль: ${carName}.`,
         availability.message
-      ].join(' ')
+      ].filter(Boolean).join(' ')
     });
   } catch (err) {
     console.error(err);

@@ -1,5 +1,6 @@
 import { findVehicle, searchVehicleDetails, searchWithFallback } from '../lib/laximo.js';
 import { matchOemAgainstSheets } from '../lib/ai-match.js';
+import { findVehiclePartsViaAI } from '../lib/ai-vin-lookup.js';
 import { SHEETS } from '../lib/sheets.js';
 
 // BMW/Mercedes, нештатная (Android) магнитола: клиенту нужна ПЕРЕДНЯЯ камера + OE-номер
@@ -28,6 +29,9 @@ const HEADUNIT_INCLUDE_RE = /радио|дисплей|навигац|аудио
 // "наушник" — беспроводные наушники заднего развлечения ("Накладные радионаушники")
 const HEADUNIT_EXCLUDE_RE = /рама|крыло|стекл|уплотнител|подрамник|кронштейн|катализатор|усилитель\s*тормоз|сальник|дистанц|щиток|кожух|панель\s*приборов|панель\s*управлен|подушк|ремень|люк|окн|лобов|звукоизоляц|портативн|к-т|к-кт|комплект|набор|наушник|потолок|крыш|накладк/i;
 
+const AI_CAMERA_DESC = 'камера переднего вида (сам модуль камеры, не крепление/кожух)';
+const AI_HEADUNIT_DESC = 'штатное головное устройство/магнитола BMW или Mercedes (сам блок электроники, не пульт/панель управления)';
+
 export default async function handler(req, res) {
   const { vin } = req.body ?? {};
 
@@ -39,25 +43,49 @@ export default async function handler(req, res) {
   }
 
   try {
+    let carName, camera, headunit, viaAI = false;
+
     const vehicles = await findVehicle(vin);
     const vehicle = vehicles?.[0];
 
-    if (!vehicle) {
-      return res.json({ found: false, message: 'Автомобиль по этому VIN не найден в каталоге.' });
+    if (vehicle) {
+      carName = `${vehicle.brand} ${vehicle.name}`;
+
+      const cameraResults = await searchVehicleDetails(vehicle.catalog, vehicle.ssd, vehicle.vehicleId, 'camera');
+      const cameraCandidates = cameraResults.filter(r => CAMERA_RE.test(r.name) && !CAMERA_EXCLUDE_RE.test(r.name));
+      const frontExplicit = cameraCandidates.filter(r => FRONT_RE.test(r.name));
+      const cameraAmbiguous = cameraCandidates.filter(r => !REAR_RE.test(r.name) && !FRONT_RE.test(r.name));
+      const foundCamera = frontExplicit[0] ?? cameraAmbiguous[0] ?? null;
+      if (foundCamera) camera = { oem: foundCamera.oem, name: foundCamera.name };
+
+      const foundHeadunit = await searchWithFallback(
+        vehicle.catalog, vehicle.ssd, vehicle.vehicleId,
+        HEADUNIT_QUERIES, HEADUNIT_INCLUDE_RE, HEADUNIT_EXCLUDE_RE
+      );
+      if (foundHeadunit) headunit = { oem: foundHeadunit.oem, name: foundHeadunit.name };
+    } else {
+      // Laximo не распознал VIN (не покрывает рынок/год) — пробуем через ИИ с веб-поиском
+      const ai = await findVehiclePartsViaAI(vin, [
+        { key: 'camera', description: AI_CAMERA_DESC },
+        { key: 'headunit', description: AI_HEADUNIT_DESC }
+      ]);
+      if (ai) {
+        carName = ai.carName;
+        if (ai.parts.camera?.oem) camera = { oem: ai.parts.camera.oem, name: ai.parts.camera.part_name };
+        if (ai.parts.headunit?.oem) headunit = { oem: ai.parts.headunit.oem, name: ai.parts.headunit.part_name };
+        viaAI = Boolean(camera || headunit);
+      }
     }
 
-    // 1. Передняя камера
-    const cameraResults = await searchVehicleDetails(vehicle.catalog, vehicle.ssd, vehicle.vehicleId, 'camera');
-    const cameraCandidates = cameraResults.filter(r => CAMERA_RE.test(r.name) && !CAMERA_EXCLUDE_RE.test(r.name));
-    const frontExplicit = cameraCandidates.filter(r => FRONT_RE.test(r.name));
-    const cameraAmbiguous = cameraCandidates.filter(r => !REAR_RE.test(r.name) && !FRONT_RE.test(r.name));
-    const camera = frontExplicit[0] ?? cameraAmbiguous[0] ?? null;
-
-    // 2. Штатная магнитола (OE + название, без определения системы)
-    const headunit = await searchWithFallback(
-      vehicle.catalog, vehicle.ssd, vehicle.vehicleId,
-      HEADUNIT_QUERIES, HEADUNIT_INCLUDE_RE, HEADUNIT_EXCLUDE_RE
-    );
+    if (!camera && !headunit) {
+      return res.json({
+        found: false,
+        car_name: carName,
+        message: carName
+          ? 'Ни камера, ни штатная магнитола для этого автомобиля не найдены в каталоге производителя.'
+          : 'Автомобиль по этому VIN не найден в каталоге производителя, и определить его через ИИ тоже не удалось.'
+      });
+    }
 
     const decoder = headunit
       ? await matchOemAgainstSheets({
@@ -69,15 +97,17 @@ export default async function handler(req, res) {
 
     return res.json({
       found: true,
-      car_name: `${vehicle.brand} ${vehicle.name}`,
+      car_name: carName,
       camera: camera ? { oem: camera.oem, part_name: camera.name } : null,
       headunit: headunit ? { oem: headunit.oem, part_name: headunit.name } : null,
       decoder,
+      source: viaAI ? 'ai_fallback' : 'laximo',
       message: [
+        viaAI ? 'Автомобиль не найден в официальном каталоге — детали определены через ИИ приблизительно, точность ниже обычной.' : null,
         camera ? `Камера переднего вида: ${camera.oem} — ${camera.name}` : 'Камера переднего вида не найдена в каталоге производителя.',
         headunit ? `Штатная магнитола: ${headunit.oem} — ${headunit.name}` : 'Штатная магнитола не определена в каталоге по этому VIN.',
         decoder ? decoder.message : null,
-        `Автомобиль: ${vehicle.brand} ${vehicle.name}`
+        `Автомобиль: ${carName}`
       ].filter(Boolean).join('\n')
     });
   } catch (err) {
