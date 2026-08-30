@@ -7,7 +7,7 @@ const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/i;
 const AI_PART_DESC = 'ручка/кнопка открывания двери багажника (не ручка двери салона и не ручка сиденья)';
 
 export default async function handler(req, res) {
-  const vin = req.body?.vin ?? req.query?.vin;
+  const { vin } = req.body ?? {};
 
   if (!vin || !VIN_RE.test(vin)) {
     return res.json({

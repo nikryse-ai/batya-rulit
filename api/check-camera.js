@@ -7,8 +7,7 @@ const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/i;
 const AI_PART_DESC = 'камера заднего вида для штатной мультимедийной системы (не декоративная накладка/кожух/кронштейн — сама камера с видеосигналом)';
 
 export default async function handler(req, res) {
-  const vin = req.body?.vin ?? req.query?.vin;
-  console.log('DEBUG incoming request:', JSON.stringify({ body: req.body, query: req.query }));
+  const { vin } = req.body ?? {};
 
   if (!vin || !VIN_RE.test(vin)) {
     return res.json({
