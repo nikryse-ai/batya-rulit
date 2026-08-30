@@ -18,7 +18,7 @@ function detectPlatform(oem) {
 }
 
 export default async function handler(req, res) {
-  const { vin } = req.body ?? {};
+  const vin = req.body?.vin ?? req.query?.vin;
 
   if (!vin || !VIN_RE.test(vin)) {
     return res.json({

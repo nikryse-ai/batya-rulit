@@ -11,7 +11,7 @@ const AI_CAMERA_DESC = 'камера переднего вида (сам мод�
 const AI_HEADUNIT_DESC = 'штатное головное устройство/магнитола BMW или Mercedes (сам блок электроники, не пульт/панель управления)';
 
 export default async function handler(req, res) {
-  const { vin } = req.body ?? {};
+  const vin = req.body?.vin ?? req.query?.vin;
 
   if (!vin || !VIN_RE.test(vin)) {
     return res.json({
