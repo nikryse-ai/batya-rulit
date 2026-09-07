@@ -16,8 +16,13 @@ export default async function handler(req, res) {
     });
   }
 
+  // Сквозной тайм-бюджет на весь запрос (50с из 60с maxDuration в vercel.json — 10с про запас
+  // на чтение таблиц/сериализацию) — делится между всеми вызовами Gemini ниже по остатку
+  // времени, а не фиксированными кусками, см. lib/gemini.js.
+  const deadline = Date.now() + 50000;
+
   try {
-    const ai = await findVehiclePartsViaAI(vin, [{ key: 'plate_lamp', description: AI_PART_DESC }]);
+    const ai = await findVehiclePartsViaAI(vin, [{ key: 'plate_lamp', description: AI_PART_DESC }], { deadline });
     const carName = ai?.carName;
     const plate = ai?.parts?.plate_lamp?.oem
       ? { oem: ai.parts.plate_lamp.oem, name: ai.parts.plate_lamp.part_name }
@@ -36,7 +41,8 @@ export default async function handler(req, res) {
     const availability = await matchOemAgainstSheets({
       oe: plate.oem,
       sheetNames: [SHEETS.HS_LAMP, SHEETS.ALL_PRODUCTS],
-      resultKind: 'availability'
+      resultKind: 'availability',
+      deadline
     });
 
     return res.json({

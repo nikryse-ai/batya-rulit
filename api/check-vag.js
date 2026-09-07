@@ -27,11 +27,17 @@ export default async function handler(req, res) {
     });
   }
 
+  // Сквозной тайм-бюджет на весь запрос (50с из 60с maxDuration в vercel.json — 10с про запас
+  // на чтение таблиц/сериализацию). Здесь особенно важен, т.к. ниже возможны ДО ТРЁХ
+  // последовательных вызовов Gemini (VIN-lookup + сверка магнитолы + сверка ручки) —
+  // с фиксированными бюджетами это гарантированно упиралось бы в 60с без запаса.
+  const deadline = Date.now() + 50000;
+
   try {
     const ai = await findVehiclePartsViaAI(vin, [
       { key: 'radio', description: AI_RADIO_DESC },
       { key: 'handle', description: AI_HANDLE_DESC }
-    ]);
+    ], { deadline });
     const carName = ai?.carName;
     const radio = ai?.parts?.radio?.oem
       ? { oem: ai.parts.radio.oem, name: ai.parts.radio.part_name }
@@ -55,14 +61,16 @@ export default async function handler(req, res) {
     const availability = await matchOemAgainstSheets({
       oe: radio.oem,
       sheetNames: [SHEETS.ALL_PRODUCTS],
-      resultKind: 'availability'
+      resultKind: 'availability',
+      deadline
     });
 
     const handleAvailability = trunkHandles.length
       ? await matchOemAgainstSheets({
           oe: trunkHandles[0].oem,
           sheetNames: [SHEETS.VAG, SHEETS.ALL_PRODUCTS],
-          resultKind: 'availability'
+          resultKind: 'availability',
+          deadline
         })
       : null;
 
