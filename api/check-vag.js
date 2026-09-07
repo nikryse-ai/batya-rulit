@@ -18,7 +18,7 @@ function detectPlatform(oem) {
 }
 
 export default async function handler(req, res) {
-  const { vin } = req.body ?? {};
+  const { vin, headunit_type } = req.body ?? {};
 
   if (!vin || !VIN_RE.test(vin)) {
     return res.json({
@@ -54,9 +54,17 @@ export default async function handler(req, res) {
 
     const availability = await matchOemAgainstSheets({
       oe: radio.oem,
-      sheetNames: [SHEETS.VAG, SHEETS.ALL_PRODUCTS],
+      sheetNames: [SHEETS.ALL_PRODUCTS],
       resultKind: 'availability'
     });
+
+    const handleAvailability = trunkHandles.length
+      ? await matchOemAgainstSheets({
+          oe: trunkHandles[0].oem,
+          sheetNames: [SHEETS.VAG, SHEETS.ALL_PRODUCTS],
+          resultKind: 'availability'
+        })
+      : null;
 
     return res.json({
       found: true,
@@ -64,6 +72,8 @@ export default async function handler(req, res) {
       radio: { oem: radio.oem, part_name: radio.name },
       platform,
       trunk_handle_variants: trunkHandles.map(h => ({ oem: h.oem, part_name: h.name })),
+      handle_availability: handleAvailability,
+      headunit_type: headunit_type ?? null,
       source: 'ai',
       availability,
       message: [
@@ -71,8 +81,12 @@ export default async function handler(req, res) {
         availability.message,
         platform ? `Платформа: ${platform}` : null,
         trunkHandles.length
-          ? `Варианты ручки/кнопки багажника:\n${trunkHandles.map(h => `${h.oem} — ${h.name}`).join('\n')}`
-          : 'Ручка/кнопка багажника не определена.'
+          ? `Ручка/кнопка багажника: ${trunkHandles[0].oem} — ${trunkHandles[0].name}`
+          : 'Ручка/кнопка багажника не определена.',
+        handleAvailability ? handleAvailability.message : null,
+        headunit_type
+          ? `Тип магнитолы клиента: ${headunit_type}. Учти это при подборе совместимого варианта камеры в ручке (модель камеры и применяемость — в данных по ручке выше) и предупреди клиента, если для его типа магнитолы нужен отдельный переходник/декодер видеосигнала.`
+          : null
       ].filter(Boolean).join('\n')
     });
   } catch (err) {
