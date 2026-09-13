@@ -1,9 +1,9 @@
-import { matchOemAgainstSheets } from '../lib/ai-match.js';
 import { findVehiclePartsViaAI } from '../lib/ai-vin-lookup.js';
-import { SHEETS } from '../lib/sheets.js';
 
 // BMW/Mercedes, нештатная (Android) магнитола: клиенту нужна ПЕРЕДНЯЯ камера + OE-номер
-// штатной магнитолы (чтобы позже свериться с таблицей совместимости — логика таблицы отдельно).
+// штатной магнитолы. Совместимость магнитолы с видеосигналом камеры по решению заказчика
+// (13.09.2026) не сверяется по таблице — лист "декодеры BMWMERCEDES" не машиночитаем
+// (нет колонок, свободные заметки), поэтому это отдано на откуп ИИ в промпте Savvy.
 
 const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/i;
 
@@ -48,26 +48,18 @@ export default async function handler(req, res) {
       });
     }
 
-    const decoder = headunit
-      ? await matchOemAgainstSheets({
-          oe: headunit.oem,
-          sheetNames: [SHEETS.BMW_MERCEDES_DECODER],
-          resultKind: 'decoder',
-          deadline
-        })
-      : null;
-
     return res.json({
       found: true,
       car_name: carName,
       camera: camera ? { oem: camera.oem, part_name: camera.name } : null,
       headunit: headunit ? { oem: headunit.oem, part_name: headunit.name } : null,
-      decoder,
       source: 'ai',
       message: [
         camera ? `Камера переднего вида: ${camera.oem} — ${camera.name}` : 'Камера переднего вида не определена.',
         headunit ? `Штатная магнитола: ${headunit.oem} — ${headunit.name}` : 'Штатная магнитола не определена.',
-        decoder ? decoder.message : null,
+        headunit
+          ? 'По своим знаниям определи, поддерживает ли эта модель магнитолы приём видеосигнала камеры и какой декодер/переходник для неё нужен — точных данных по этой модели у нас нет.'
+          : null,
         `Автомобиль: ${carName}`
       ].filter(Boolean).join('\n')
     });

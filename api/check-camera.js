@@ -1,6 +1,6 @@
 import { matchOemAgainstSheets } from '../lib/ai-match.js';
 import { findVehiclePartsViaAI } from '../lib/ai-vin-lookup.js';
-import { SHEETS } from '../lib/sheets.js';
+import { ALL_AVAILABILITY_SHEETS } from '../lib/sheets.js';
 
 const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/i;
 
@@ -40,8 +40,7 @@ export default async function handler(req, res) {
 
     const availability = await matchOemAgainstSheets({
       oe: camera.oem,
-      sheetNames: [SHEETS.STANDARD, SHEETS.ALL_PRODUCTS, SHEETS.STANDARD_FALLBACK],
-      resultKind: 'availability',
+      sheetNames: ALL_AVAILABILITY_SHEETS,
       deadline
     });
 

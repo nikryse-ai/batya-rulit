@@ -1,6 +1,6 @@
-import { matchOemAgainstSheets } from '../lib/ai-match.js';
+import { matchOemAgainstSheets, findVagCameraVariants } from '../lib/ai-match.js';
 import { findVehiclePartsViaAI } from '../lib/ai-vin-lookup.js';
-import { SHEETS } from '../lib/sheets.js';
+import { ALL_AVAILABILITY_SHEETS } from '../lib/sheets.js';
 
 const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/i;
 
@@ -15,6 +15,27 @@ function detectPlatform(oem) {
   if (MQB_PREFIXES.includes(prefix)) return 'MQB';
   if (PQ_PREFIXES.includes(prefix)) return 'PQ';
   return null;
+}
+
+function formatVariantLine(label, links) {
+  return links ? `— ${label}: ${links.join(', ')}` : null;
+}
+
+// По решению заказчика (13.09.2026) какой из 3 готовых вариантов камеры под ручку предложить
+// клиенту — определяет ИИ в Savvy по точной модели магнитолы клиента, не жёсткое правило в коде
+// (не все штатные магнитолы вообще принимают видеосигнал камеры, а среди тех, что принимают,
+// не все поддерживают динамические линии — этого справочника у нас нет, только у ИИ есть шанс
+// знать конкретную модель). Код лишь достаёт все 3 варианта как есть и просит ИИ выбрать.
+function formatCameraVariants(variants) {
+  if (!variants) return null;
+  return [
+    variants.cameraModel ? `Модель камеры для этой ручки: ${variants.cameraModel}.` : null,
+    'Готовые варианты камеры под эту ручку (выбери подходящий по точной модели магнитолы клиента выше — не предлагай сразу все):',
+    formatVariantLine('для Android/нештатной магнитолы', variants.android),
+    formatVariantLine('для штатной магнитолы со статическими парковочными линиями', variants.static),
+    formatVariantLine('для штатной магнитолы с динамическими (следящими за рулём) линиями', variants.dynamic),
+    'Если по своим знаниям определишь, что эта конкретная модель штатной магнитолы вообще не принимает видеосигнал с камеры — прямо скажи клиенту, что для его магнитолы решения нет, и не предлагай ни один из вариантов выше.'
+  ].filter(Boolean).join('\n');
 }
 
 export default async function handler(req, res) {
@@ -60,18 +81,12 @@ export default async function handler(req, res) {
 
     const availability = await matchOemAgainstSheets({
       oe: radio.oem,
-      sheetNames: [SHEETS.ALL_PRODUCTS],
-      resultKind: 'availability',
+      sheetNames: ALL_AVAILABILITY_SHEETS,
       deadline
     });
 
-    const handleAvailability = trunkHandles.length
-      ? await matchOemAgainstSheets({
-          oe: trunkHandles[0].oem,
-          sheetNames: [SHEETS.VAG, SHEETS.ALL_PRODUCTS],
-          resultKind: 'availability',
-          deadline
-        })
+    const cameraVariants = trunkHandles.length
+      ? await findVagCameraVariants({ handleOe: trunkHandles[0].oem, deadline })
       : null;
 
     return res.json({
@@ -80,7 +95,7 @@ export default async function handler(req, res) {
       radio: { oem: radio.oem, part_name: radio.name },
       platform,
       trunk_handle_variants: trunkHandles.map(h => ({ oem: h.oem, part_name: h.name })),
-      handle_availability: handleAvailability,
+      camera_variants: cameraVariants,
       headunit_type: headunit_type ?? null,
       source: 'ai',
       availability,
@@ -91,10 +106,8 @@ export default async function handler(req, res) {
         trunkHandles.length
           ? `Ручка/кнопка багажника: ${trunkHandles[0].oem} — ${trunkHandles[0].name}`
           : 'Ручка/кнопка багажника не определена.',
-        handleAvailability ? handleAvailability.message : null,
-        headunit_type
-          ? `Тип магнитолы клиента: ${headunit_type}. Учти это при подборе совместимого варианта камеры в ручке (модель камеры и применяемость — в данных по ручке выше) и предупреди клиента, если для его типа магнитолы нужен отдельный переходник/декодер видеосигнала.`
-          : null
+        formatCameraVariants(cameraVariants),
+        headunit_type ? `Тип магнитолы клиента (со слов клиента): ${headunit_type}.` : null
       ].filter(Boolean).join('\n')
     });
   } catch (err) {
