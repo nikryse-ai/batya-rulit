@@ -51,7 +51,7 @@ export default async function handler(req, res) {
       source: 'ai',
       availability,
       message: [
-        handles.map(h => `${h.oem} — ${h.name}`).join('\n'),
+        handles.map(h => h.name).join('\n'),
         availability.message
       ].filter(Boolean).join('\n')
     });

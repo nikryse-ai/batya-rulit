@@ -55,8 +55,8 @@ export default async function handler(req, res) {
       headunit: headunit ? { oem: headunit.oem, part_name: headunit.name } : null,
       source: 'ai',
       message: [
-        camera ? `Камера переднего вида: ${camera.oem} — ${camera.name}` : 'Камера переднего вида не определена.',
-        headunit ? `Штатная магнитола: ${headunit.oem} — ${headunit.name}` : 'Штатная магнитола не определена.',
+        camera ? `Камера переднего вида: ${camera.name}` : 'Камера переднего вида не определена.',
+        headunit ? `Штатная магнитола: ${headunit.name}` : 'Штатная магнитола не определена.',
         headunit
           ? 'По своим знаниям определи, поддерживает ли эта модель магнитолы приём видеосигнала камеры и какой декодер/переходник для неё нужен — точных данных по этой модели у нас нет.'
           : null,

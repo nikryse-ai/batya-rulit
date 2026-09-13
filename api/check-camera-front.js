@@ -52,7 +52,7 @@ export default async function handler(req, res) {
       source: 'ai',
       availability,
       message: [
-        `OEM артикул камеры: ${camera.oem}. Деталь: ${camera.name}. Автомобиль: ${carName}.`,
+        `Деталь: ${camera.name}. Автомобиль: ${carName}.`,
         availability.message
       ].filter(Boolean).join(' ')
     });

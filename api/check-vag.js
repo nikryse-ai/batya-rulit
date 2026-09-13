@@ -100,11 +100,11 @@ export default async function handler(req, res) {
       source: 'ai',
       availability,
       message: [
-        `Магнитола: ${radio.oem} — ${radio.name}`,
+        `Магнитола: ${radio.name}`,
         availability.message,
         platform ? `Платформа: ${platform}` : null,
         trunkHandles.length
-          ? `Ручка/кнопка багажника: ${trunkHandles[0].oem} — ${trunkHandles[0].name}`
+          ? `Ручка/кнопка багажника: ${trunkHandles[0].name}`
           : 'Ручка/кнопка багажника не определена.',
         formatCameraVariants(cameraVariants),
         headunit_type ? `Тип магнитолы клиента (со слов клиента): ${headunit_type}.` : null

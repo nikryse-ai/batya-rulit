@@ -51,7 +51,7 @@ export default async function handler(req, res) {
       source: 'ai',
       availability,
       message: [
-        `Подсветка номера: ${plate.oem} — ${plate.name}`,
+        `Подсветка номера: ${plate.name}`,
         availability.message
       ].filter(Boolean).join(' ')
     });
