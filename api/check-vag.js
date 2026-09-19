@@ -145,9 +145,16 @@ export default async function handler(req, res) {
     // одинаковыми запросами. Один точечный повтор именно этого случая — раз машина в принципе
     // определилась, но магнитолы нет, а времени ещё достаточно. Не повторяем для остальных вебхуков/
     // случаев огулом, чтобы не удваивать стоимость там, где детали у машины реально нет.
-    if (ai?.carName && !ai?.parts?.radio?.oem && Date.now() < deadline - 20000) {
+    //
+    // РАСШИРЕНО 19.09.2026 (тот же день, реальный прод-случай через Savvy): условие изначально
+    // покрывало только "машина определилась, магнитолы нет" — но в проде поймали случай, когда
+    // findVehiclePartsViaAI вернул null целиком (VIN-lookup упёрся в свой кап 30с и оборвался,
+    // лог Vercel: 1 POST, Execution Duration 30.24s, AbortError) — тогда ai?.carName тоже falsy,
+    // и старое условие не срабатывало вообще, хотя времени на повтор было предостаточно (30 из 55с).
+    const needsRetry = !ai || (ai.carName && !ai.parts?.radio?.oem);
+    if (needsRetry && Date.now() < deadline - 20000) {
       const retryAi = await findVehiclePartsViaAI(vin, parts, { deadline });
-      if (retryAi?.parts?.radio?.oem) ai = retryAi;
+      if (retryAi) ai = retryAi;
     }
 
     const carName = ai?.carName;
