@@ -16,10 +16,12 @@ export default async function handler(req, res) {
     });
   }
 
-  // Сквозной тайм-бюджет на весь запрос (50с из 60с maxDuration в vercel.json — 10с про запас
-  // на чтение таблиц/сериализацию) — делится между всеми вызовами Gemini ниже по остатку
-  // времени, а не фиксированными кусками, см. lib/gemini.js.
-  const deadline = Date.now() + 50000;
+  // Сквозной тайм-бюджет на весь запрос (55с из 60с maxDuration в vercel.json — 5с про запас
+  // на чтение таблиц/сериализацию; было 50с/10с, но живые Vercel-логи 19.09.2026 показали, что
+  // реальный запас гораздо больше — "Response finished" укладывался в 50.3с при бюджете 50с,
+  // а уровень 2 сверки почти всегда обрывался именно об эту границу) — делится между всеми
+  // вызовами Gemini ниже по остатку времени, а не фиксированными кусками, см. lib/gemini.js.
+  const deadline = Date.now() + 55000;
 
   try {
     const ai = await findVehiclePartsViaAI(vin, [{ key: 'camera', description: AI_PART_DESC }], { deadline });
