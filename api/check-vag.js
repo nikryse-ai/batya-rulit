@@ -17,13 +17,37 @@ function detectPlatform(oem) {
   return null;
 }
 
-// ИСПРАВЛЕНО 19.09.2026: раньше код отдавал все 3 готовых варианта камеры (android/static/dynamic)
-// и просил ИИ в Savvy выбрать самостоятельно. Пользователь поправил: выбор статика/динамика
-// заказчик прописал прямо в таблице (лист «РУЧКИ VAG», заметка в нижних строках) — определяется
-// платформой САМОЙ МАГНИТОЛЫ (MQB → динамика, PQ → статика), а не текстом ИИ. Платформа магнитолы
-// уже вычислялась кодом (detectPlatform(radio.oem)) и раньше просто выводилась в message как
-// справочная строка, реально не влияя на выбор — теперь используется для выбора напрямую.
-// android-вариант выбирается по headunit_type (штатная/нештатная), который передаёт клиент/Savvy.
+// Разбирает текст колонки «Платформа» строки ручки в листе РУЧКИ VAG (её заполняет заказчик
+// сам). Там встречаются как однозначные значения ("PQ35", "MQB", "MQB A0"), так и осознанно
+// неоднозначные ("PQ35/MQB" — сама таблица говорит "смотри по конкретной машине").
+function classifyRowPlatform(rawPlatform) {
+  if (!rawPlatform) return null;
+  const text = rawPlatform.toUpperCase();
+  const hasMqb = text.includes('MQB');
+  const hasPq = text.includes('PQ');
+  if (hasMqb && hasPq) return 'ambiguous';
+  if (hasMqb) return 'MQB';
+  if (hasPq) return 'PQ';
+  return null; // текст не распознан (опечатка/другой формат) — не гадаем
+}
+
+// ИСПРАВЛЕНО 19.09.2026 (дважды): раньше код отдавал все 3 готовых варианта камеры
+// (android/static/dynamic) и просил ИИ в Savvy выбрать самостоятельно — пользователь поправил,
+// что выбор должен делать код. Первая версия фикса определяла платформу магнитолы ТОЛЬКО по
+// её OEM-префиксу (detectPlatform, свой захардкоженный список PQ/MQB) — при построчной сверке
+// с реальной таблицей нашлись прямые противоречия (напр. префикс "1T0" в нашем списке = PQ,
+// но в таблице строка с этим же префиксом прямо помечена "MQB"; префикс "5N0" в нашем списке
+// строго PQ, а в таблице есть его же MQB-строки). Решение пользователя 19.09.2026: таблицу ведёт
+// заказчик, ей и доверять в первую очередь — если он где-то ошибётся, это его зона ответственности,
+// не наша задача её самостоятельно "исправлять" отдельным списком, который может с ней разойтись.
+//
+// Приоритет теперь такой:
+//   1) Колонка «Платформа» у найденной строки ручки (variants.platform, из таблицы заказчика) —
+//      если там однозначно PQ или MQB, используем как есть, никакого дальнейшего анализа.
+//   2) Если в таблице стоит осознанно неоднозначное "PQ35/MQB" или колонка пустая/нераспознанная —
+//      ТОЛЬКО тогда используем запасной сигнал: platform по OEM самой магнитолы (detectPlatform),
+//      ровно как просит заметка в самой таблице ("но нужна проверка магнитолы на mqb").
+//   3) Если и запасной сигнал не дал ответа — честный platform_unknown, не гадаем.
 function resolveCameraVariant(variants, { platform, headunitType }) {
   if (!variants) return null;
   const type = (headunitType || '').toLowerCase();
@@ -37,20 +61,23 @@ function resolveCameraVariant(variants, { platform, headunitType }) {
   }
 
   // Тип магнитолы явно не уточнён клиентом — исторически check-vag по умолчанию отвечал
-  // за штатный сценарий, тем же путём идём и здесь, но платформа всё равно решает код, не ИИ.
+  // за штатный сценарий, тем же путём идём и здесь.
   if (isStandardStated || !headunitType) {
-    if (platform === 'MQB') {
+    const rowPlatform = classifyRowPlatform(variants.platform);
+    const resolvedPlatform = (rowPlatform === 'MQB' || rowPlatform === 'PQ')
+      ? rowPlatform
+      : platform; // таблица не дала однозначного ответа — запасной сигнал по OEM магнитолы
+
+    if (resolvedPlatform === 'MQB') {
       return variants.dynamic
         ? { kind: 'dynamic', links: variants.dynamic, cameraModel: variants.cameraModel }
         : { kind: 'not_available', cameraModel: variants.cameraModel };
     }
-    if (platform === 'PQ') {
+    if (resolvedPlatform === 'PQ') {
       return variants.static
         ? { kind: 'static', links: variants.static, cameraModel: variants.cameraModel }
         : { kind: 'not_available', cameraModel: variants.cameraModel };
     }
-    // OEM магнитолы не попал ни в один известный список префиксов PQ/MQB (см. известное неполное
-    // покрытие эвристики) — честно говорим, что не смогли определить, а не гадаем/отдаём LLM решать.
     return { kind: 'platform_unknown', cameraModel: variants.cameraModel };
   }
 
