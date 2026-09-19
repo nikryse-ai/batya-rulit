@@ -17,25 +17,65 @@ function detectPlatform(oem) {
   return null;
 }
 
-function formatVariantLine(label, links) {
-  return links ? `— ${label}: ${links.join(', ')}` : null;
+// ИСПРАВЛЕНО 19.09.2026: раньше код отдавал все 3 готовых варианта камеры (android/static/dynamic)
+// и просил ИИ в Savvy выбрать самостоятельно. Пользователь поправил: выбор статика/динамика
+// заказчик прописал прямо в таблице (лист «РУЧКИ VAG», заметка в нижних строках) — определяется
+// платформой САМОЙ МАГНИТОЛЫ (MQB → динамика, PQ → статика), а не текстом ИИ. Платформа магнитолы
+// уже вычислялась кодом (detectPlatform(radio.oem)) и раньше просто выводилась в message как
+// справочная строка, реально не влияя на выбор — теперь используется для выбора напрямую.
+// android-вариант выбирается по headunit_type (штатная/нештатная), который передаёт клиент/Savvy.
+function resolveCameraVariant(variants, { platform, headunitType }) {
+  if (!variants) return null;
+  const type = (headunitType || '').toLowerCase();
+  const isNonstandard = /нештат|android|андроид/.test(type);
+  const isStandardStated = !isNonstandard && /штатн/.test(type);
+
+  if (isNonstandard) {
+    return variants.android
+      ? { kind: 'android', links: variants.android, cameraModel: variants.cameraModel }
+      : { kind: 'not_available', cameraModel: variants.cameraModel };
+  }
+
+  // Тип магнитолы явно не уточнён клиентом — исторически check-vag по умолчанию отвечал
+  // за штатный сценарий, тем же путём идём и здесь, но платформа всё равно решает код, не ИИ.
+  if (isStandardStated || !headunitType) {
+    if (platform === 'MQB') {
+      return variants.dynamic
+        ? { kind: 'dynamic', links: variants.dynamic, cameraModel: variants.cameraModel }
+        : { kind: 'not_available', cameraModel: variants.cameraModel };
+    }
+    if (platform === 'PQ') {
+      return variants.static
+        ? { kind: 'static', links: variants.static, cameraModel: variants.cameraModel }
+        : { kind: 'not_available', cameraModel: variants.cameraModel };
+    }
+    // OEM магнитолы не попал ни в один известный список префиксов PQ/MQB (см. известное неполное
+    // покрытие эвристики) — честно говорим, что не смогли определить, а не гадаем/отдаём LLM решать.
+    return { kind: 'platform_unknown', cameraModel: variants.cameraModel };
+  }
+
+  return { kind: 'headunit_type_unclear', cameraModel: variants.cameraModel };
 }
 
-// По решению заказчика (13.09.2026) какой из 3 готовых вариантов камеры под ручку предложить
-// клиенту — определяет ИИ в Savvy по точной модели магнитолы клиента, не жёсткое правило в коде
-// (не все штатные магнитолы вообще принимают видеосигнал камеры, а среди тех, что принимают,
-// не все поддерживают динамические линии — этого справочника у нас нет, только у ИИ есть шанс
-// знать конкретную модель). Код лишь достаёт все 3 варианта как есть и просит ИИ выбрать.
-function formatCameraVariants(variants) {
-  if (!variants) return null;
-  return [
-    variants.cameraModel ? `Модель камеры для этой ручки: ${variants.cameraModel}.` : null,
-    'Готовые варианты камеры под эту ручку (выбери подходящий по точной модели магнитолы клиента выше — не предлагай сразу все):',
-    formatVariantLine('для Android/нештатной магнитолы', variants.android),
-    formatVariantLine('для штатной магнитолы со статическими парковочными линиями', variants.static),
-    formatVariantLine('для штатной магнитолы с динамическими (следящими за рулём) линиями', variants.dynamic),
-    'Если по своим знаниям определишь, что эта конкретная модель штатной магнитолы вообще не принимает видеосигнал с камеры — прямо скажи клиенту, что для его магнитолы решения нет, и не предлагай ни один из вариантов выше.'
-  ].filter(Boolean).join('\n');
+function formatCameraVariant(resolved) {
+  if (!resolved) return null;
+  const modelLine = resolved.cameraModel ? `Модель камеры для этой ручки: ${resolved.cameraModel}.` : null;
+  switch (resolved.kind) {
+    case 'android':
+      return [modelLine, `Камера для Android/нештатной магнитолы: ${resolved.links.join(', ')}`].filter(Boolean).join('\n');
+    case 'static':
+      return [modelLine, `Камера для штатной магнитолы (платформа PQ, статические парковочные линии): ${resolved.links.join(', ')}`].filter(Boolean).join('\n');
+    case 'dynamic':
+      return [modelLine, `Камера для штатной магнитолы (платформа MQB, динамические следящие линии): ${resolved.links.join(', ')}`].filter(Boolean).join('\n');
+    case 'not_available':
+      return [modelLine, 'Для этого сочетания магнитолы и автомобиля готового варианта камеры в таблице нет — сообщите клиенту честно, без предположений.'].filter(Boolean).join('\n');
+    case 'platform_unknown':
+      return [modelLine, 'Не удалось определить платформу магнитолы (PQ/MQB) по её OEM-номеру — нужна ручная проверка, прежде чем предлагать статический или динамический вариант камеры.'].filter(Boolean).join('\n');
+    case 'headunit_type_unclear':
+      return [modelLine, 'Уточните у клиента, штатная магнитола или нештатная (Android) — без этого нельзя подобрать точный вариант камеры.'].filter(Boolean).join('\n');
+    default:
+      return modelLine;
+  }
 }
 
 export default async function handler(req, res) {
@@ -89,13 +129,15 @@ export default async function handler(req, res) {
       ? await findVagCameraVariants({ handleOe: trunkHandles[0].oem, deadline })
       : null;
 
+    const cameraVariant = resolveCameraVariant(cameraVariants, { platform, headunitType: headunit_type });
+
     return res.json({
       found: true,
       car_name: carName,
       radio: { oem: radio.oem, part_name: radio.name },
       platform,
       trunk_handle_variants: trunkHandles.map(h => ({ oem: h.oem, part_name: h.name })),
-      camera_variants: cameraVariants,
+      camera_variant: cameraVariant,
       headunit_type: headunit_type ?? null,
       source: 'ai',
       availability,
@@ -106,7 +148,7 @@ export default async function handler(req, res) {
         trunkHandles.length
           ? `Ручка/кнопка багажника: ${trunkHandles[0].name}`
           : 'Ручка/кнопка багажника не определена.',
-        formatCameraVariants(cameraVariants),
+        formatCameraVariant(cameraVariant),
         headunit_type ? `Тип магнитолы клиента (со слов клиента): ${headunit_type}.` : null
       ].filter(Boolean).join('\n')
     });
