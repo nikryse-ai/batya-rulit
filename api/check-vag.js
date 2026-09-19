@@ -122,10 +122,23 @@ export default async function handler(req, res) {
   const deadline = Date.now() + 50000;
 
   try {
-    const ai = await findVehiclePartsViaAI(vin, [
+    const parts = [
       { key: 'radio', description: AI_RADIO_DESC },
       { key: 'handle', description: AI_HANDLE_DESC }
-    ], { deadline });
+    ];
+    let ai = await findVehiclePartsViaAI(vin, parts, { deadline });
+
+    // Наблюдение 19.09.2026: на той же машине (Skoda Octavia), которую ИИ до этого трижды подряд
+    // находил без проблем, один вызов вернул car_name, но БЕЗ магнитолы — не HTTP-ошибка (retry на
+    // 503 в lib/gemini.js тут не срабатывает, т.к. ошибки не было вообще), а просто разброс между
+    // одинаковыми запросами. Один точечный повтор именно этого случая — раз машина в принципе
+    // определилась, но магнитолы нет, а времени ещё достаточно. Не повторяем для остальных вебхуков/
+    // случаев огулом, чтобы не удваивать стоимость там, где детали у машины реально нет.
+    if (ai?.carName && !ai?.parts?.radio?.oem && Date.now() < deadline - 20000) {
+      const retryAi = await findVehiclePartsViaAI(vin, parts, { deadline });
+      if (retryAi?.parts?.radio?.oem) ai = retryAi;
+    }
+
     const carName = ai?.carName;
     const radio = ai?.parts?.radio?.oem
       ? { oem: ai.parts.radio.oem, name: ai.parts.radio.part_name }
