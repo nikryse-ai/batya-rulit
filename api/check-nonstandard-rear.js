@@ -1,4 +1,6 @@
 import { findVehiclePartsViaAI } from '../lib/ai-vin-lookup.js';
+import { matchOemAgainstSheets } from '../lib/ai-match.js';
+import { ALL_AVAILABILITY_SHEETS } from '../lib/sheets.js';
 
 // BMW/Mercedes, нештатная (Android) магнитола: клиенту нужна ЗАДНЯЯ камера + OE-номер
 // штатной магнитолы. Совместимость магнитолы с видеосигналом камеры по решению заказчика
@@ -49,14 +51,24 @@ export default async function handler(req, res) {
       });
     }
 
+    // ИСПРАВЛЕНО 19.09.2026: сверка наличия здесь отсутствовала вообще (не только для декодера,
+    // который осознанно убран 13.09 — камера тоже никогда не проверялась с момента добавления
+    // этого вебхука 18.08, см. git-историю). Камера — обычная деталь, которая может быть в той же
+    // "Товары с ссылками", что и для штатного сценария check-camera — сверяем её так же.
+    const availability = camera
+      ? await matchOemAgainstSheets({ oe: camera.oem, sheetNames: ALL_AVAILABILITY_SHEETS, deadline })
+      : null;
+
     return res.json({
       found: true,
       car_name: carName,
       camera: camera ? { oem: camera.oem, part_name: camera.name } : null,
       headunit: headunit ? { oem: headunit.oem, part_name: headunit.name } : null,
       source: 'ai',
+      availability,
       message: [
         camera ? `Камера заднего вида: ${camera.name}` : 'Камера заднего вида не определена.',
+        availability?.message,
         headunit ? `Штатная магнитола: ${headunit.name}` : 'Штатная магнитола не определена.',
         headunit
           ? 'По своим знаниям определи, поддерживает ли эта модель магнитолы приём видеосигнала камеры и какой декодер/переходник для неё нужен — точных данных по этой модели у нас нет.'

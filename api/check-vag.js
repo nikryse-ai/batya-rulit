@@ -84,6 +84,16 @@ function resolveCameraVariant(variants, { platform, headunitType }) {
   return { kind: 'headunit_type_unclear', cameraModel: variants.cameraModel };
 }
 
+// Не все штатные магнитолы ВАГ вообще принимают видеосигнал с камеры — это отдельный вопрос
+// от платформы/статика-динамика (решается выше кодом) и от него не зависит: магнитола без
+// видеовхода может стоять и на PQ-, и на MQB-платформе. Справочника "модель магнитолы → есть
+// видеовход или нет" не существует ни у нас, ни у Laximo (проверялось 28.07.2026) — единственный
+// шанс поймать этот случай есть у LLM в Savvy по своим знаниям о конкретной модели. ИСПРАВЛЕНО
+// 19.09.2026: эта подстраховка была в тексте до сегодняшнего редизайна (13.09), но потерялась,
+// когда выбор static/dynamic стал определяться кодом, а не ИИ — возвращена как отдельный шаг
+// ПОСЛЕ уже сделанного кодом выбора, не вместо него.
+const CAMERA_SUPPORT_CAVEAT = 'Не все штатные магнитолы в принципе принимают видеосигнал с камеры — это отдельный вопрос от платформы/варианта выше. По точной модели магнитолы клиента (см. выше) определи, поддерживает ли она видеовход вообще; если нет — честно скажи, что для его магнитолы решения нет, и не предлагай ссылку выше.';
+
 function formatCameraVariant(resolved) {
   if (!resolved) return null;
   const modelLine = resolved.cameraModel ? `Модель камеры для этой ручки: ${resolved.cameraModel}.` : null;
@@ -91,9 +101,9 @@ function formatCameraVariant(resolved) {
     case 'android':
       return [modelLine, `Камера для Android/нештатной магнитолы: ${resolved.links.join(', ')}`].filter(Boolean).join('\n');
     case 'static':
-      return [modelLine, `Камера для штатной магнитолы (платформа PQ, статические парковочные линии): ${resolved.links.join(', ')}`].filter(Boolean).join('\n');
+      return [modelLine, `Камера для штатной магнитолы (платформа PQ, статические парковочные линии): ${resolved.links.join(', ')}`, CAMERA_SUPPORT_CAVEAT].filter(Boolean).join('\n');
     case 'dynamic':
-      return [modelLine, `Камера для штатной магнитолы (платформа MQB, динамические следящие линии): ${resolved.links.join(', ')}`].filter(Boolean).join('\n');
+      return [modelLine, `Камера для штатной магнитолы (платформа MQB, динамические следящие линии): ${resolved.links.join(', ')}`, CAMERA_SUPPORT_CAVEAT].filter(Boolean).join('\n');
     case 'not_available':
       return [modelLine, 'Для этого сочетания магнитолы и автомобиля готового варианта камеры в таблице нет — сообщите клиенту честно, без предположений.'].filter(Boolean).join('\n');
     case 'platform_unknown':
