@@ -56,7 +56,12 @@ export default async function handler(req, res) {
     // этого вебхука 18.08, см. git-историю). Камера — обычная деталь, которая может быть в той же
     // "Товары с ссылками", что и для штатного сценария check-camera — сверяем её так же.
     const availability = camera
-      ? await matchOemAgainstSheets({ oe: camera.oem, sheetNames: ALL_AVAILABILITY_SHEETS, deadline })
+      ? await matchOemAgainstSheets({
+          oe: camera.oem,
+          crossReferences: ai.parts.camera?.cross_references,
+          sheetNames: ALL_AVAILABILITY_SHEETS,
+          deadline
+        })
       : null;
 
     return res.json({

@@ -41,6 +41,7 @@ export default async function handler(req, res) {
 
     const availability = await matchOemAgainstSheets({
       oe: handles[0].oem,
+      crossReferences: ai.parts.handle.cross_references,
       sheetNames: ALL_AVAILABILITY_SHEETS,
       deadline
     });

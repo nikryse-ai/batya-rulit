@@ -9,6 +9,19 @@ const PQ_PREFIXES = ['1K0', '3C0', '5N0', '1Z0', '1T0', '7N0', '6R0', '6C0', '7L
 
 const AI_RADIO_DESC = 'штатное головное устройство/магнитола (аудиосистема) концерна VAG (VW/Skoda/Audi/Seat/Cupra)';
 const AI_HANDLE_DESC = 'ручка/кнопка открывания двери багажника (не ручка двери салона и не ручка сиденья)';
+const AI_LAMP_DESC = 'плафон подсветки заднего номерного знака (не плафон освещения салона)';
+
+// ИСПРАВЛЕНО 26.09.2026: для нештатной (Android) магнитолы камера заднего вида ВАГ может
+// физически стоять в ОДНОМ из двух мест в зависимости от кузова/комплектации — в ручке
+// багажника (ручки VAG) ИЛИ в плафоне подсветки номера (как у штатного сценария check-lamp).
+// Раньше check-vag искал только по ручке — если у конкретного авто камера на самом деле
+// в плафоне, вариант для Android никогда не находился, хотя товар в таблице есть.
+function classifyHeadunitType(headunitType) {
+  const type = (headunitType || '').toLowerCase();
+  const isNonstandard = /нештат|android|андроид/.test(type);
+  const isStandardStated = !isNonstandard && /штатн/.test(type);
+  return { isNonstandard, isStandardStated };
+}
 
 function detectPlatform(oem) {
   const prefix = oem.slice(0, 3).toUpperCase();
@@ -50,9 +63,7 @@ function classifyRowPlatform(rawPlatform) {
 //   3) Если и запасной сигнал не дал ответа — честный platform_unknown, не гадаем.
 function resolveCameraVariant(variants, { platform, headunitType }) {
   if (!variants) return null;
-  const type = (headunitType || '').toLowerCase();
-  const isNonstandard = /нештат|android|андроид/.test(type);
-  const isStandardStated = !isNonstandard && /штатн/.test(type);
+  const { isNonstandard, isStandardStated } = classifyHeadunitType(headunitType);
 
   if (isNonstandard) {
     return variants.android
@@ -60,28 +71,37 @@ function resolveCameraVariant(variants, { platform, headunitType }) {
       : { kind: 'not_available', cameraModel: variants.cameraModel };
   }
 
-  // Тип магнитолы явно не уточнён клиентом — исторически check-vag по умолчанию отвечал
-  // за штатный сценарий, тем же путём идём и здесь.
-  if (isStandardStated || !headunitType) {
-    const rowPlatform = classifyRowPlatform(variants.platform);
-    const resolvedPlatform = (rowPlatform === 'MQB' || rowPlatform === 'PQ')
-      ? rowPlatform
-      : platform; // таблица не дала однозначного ответа — запасной сигнал по OEM магнитолы
+  // Платформу считаем независимо от того, подтвердил клиент штатную магнитолу или тип неясен —
+  // нужна в обоих случаях (во втором — как один из предлагаемых вариантов, см. ниже).
+  const rowPlatform = classifyRowPlatform(variants.platform);
+  const resolvedPlatform = (rowPlatform === 'MQB' || rowPlatform === 'PQ')
+    ? rowPlatform
+    : platform; // таблица не дала однозначного ответа — запасной сигнал по OEM магнитолы
 
-    if (resolvedPlatform === 'MQB') {
-      return variants.dynamic
-        ? { kind: 'dynamic', links: variants.dynamic, cameraModel: variants.cameraModel }
-        : { kind: 'not_available', cameraModel: variants.cameraModel };
-    }
-    if (resolvedPlatform === 'PQ') {
-      return variants.static
-        ? { kind: 'static', links: variants.static, cameraModel: variants.cameraModel }
-        : { kind: 'not_available', cameraModel: variants.cameraModel };
-    }
-    return { kind: 'platform_unknown', cameraModel: variants.cameraModel };
+  const standardVariant = resolvedPlatform === 'MQB'
+    ? (variants.dynamic ? { kind: 'dynamic', links: variants.dynamic } : null)
+    : resolvedPlatform === 'PQ'
+      ? (variants.static ? { kind: 'static', links: variants.static } : null)
+      : null;
+
+  if (isStandardStated) {
+    return standardVariant
+      ? { ...standardVariant, cameraModel: variants.cameraModel }
+      : { kind: resolvedPlatform ? 'not_available' : 'platform_unknown', cameraModel: variants.cameraModel };
   }
 
-  return { kind: 'headunit_type_unclear', cameraModel: variants.cameraModel };
+  // ИСПРАВЛЕНО 26.09.2026: раньше при НЕ переданном/нераспознанном типе магнитолы код молча
+  // считал её штатной — если платформу не удавалось определить (нередкий случай, см. неполноту
+  // PQ_PREFIXES/MQB_PREFIXES выше и в памяти проекта), клиент получал честное, но бесполезное
+  // "платформу не определить", хотя android-ссылка реально была в таблице (реальный прод-случай:
+  // Audi Q3, клиент сказал в чате "Android-магнитола", headunit_type до вебхука не дошёл).
+  // Теперь при неясном типе отдаём ВСЁ, что реально нашлось — не угадываем за клиента.
+  return {
+    kind: 'headunit_unclear',
+    cameraModel: variants.cameraModel,
+    androidLinks: variants.android ?? null,
+    standardVariant
+  };
 }
 
 // Не все штатные магнитолы ВАГ вообще принимают видеосигнал с камеры — это отдельный вопрос
@@ -108,11 +128,39 @@ function formatCameraVariant(resolved) {
       return [modelLine, 'Для этого сочетания магнитолы и автомобиля готового варианта камеры в таблице нет — сообщите клиенту честно, без предположений.'].filter(Boolean).join('\n');
     case 'platform_unknown':
       return [modelLine, 'Не удалось определить платформу магнитолы (PQ/MQB) по её OEM-номеру — нужна ручная проверка, прежде чем предлагать статический или динамический вариант камеры.'].filter(Boolean).join('\n');
-    case 'headunit_type_unclear':
-      return [modelLine, 'Уточните у клиента, штатная магнитола или нештатная (Android) — без этого нельзя подобрать точный вариант камеры.'].filter(Boolean).join('\n');
+    case 'headunit_unclear': {
+      const androidLine = resolved.androidLinks
+        ? `Если магнитола Android/нештатная: ${resolved.androidLinks.join(', ')}`
+        : 'Если магнитола Android/нештатная: готового варианта в таблице нет.';
+      const standardLine = resolved.standardVariant
+        ? `Если магнитола штатная (платформа ${resolved.standardVariant.kind === 'dynamic' ? 'MQB, динамические следящие линии' : 'PQ, статические парковочные линии'}): ${resolved.standardVariant.links.join(', ')}`
+        : 'Если магнитола штатная: платформу (PQ/MQB) определить не удалось — нужна ручная проверка.';
+      return [
+        modelLine,
+        androidLine,
+        standardLine,
+        resolved.standardVariant ? CAMERA_SUPPORT_CAVEAT : null,
+        'Уточните у клиента, штатная магнитола или Android/нештатная — чтобы дать точный вариант без лишнего.'
+      ].filter(Boolean).join('\n');
+    }
     default:
       return modelLine;
   }
+}
+
+// ИСПРАВЛЕНО 26.09.2026: плафон подсветки номера — второе возможное место установки камеры
+// у Android/нештатной магнитолы (альтернатива ручке багажника, см. комментарий выше у AI_LAMP_DESC).
+// Сверяется по общей таблице наличия (та же "Плафоны по OE ", что использует check-lamp.js),
+// не по листу "РУЧКИ VAG" — у плафона нет 3 готовых вариантов (android/static/dynamic), он
+// актуален только для нештатной магнитолы.
+function formatPlateLampOption(plateLamp, availability) {
+  if (!plateLamp) {
+    return 'Альтернативный вариант камеры (через плафон подсветки номера) не определён для этого автомобиля.';
+  }
+  const base = `Альтернативный вариант установки камеры — плафон подсветки номера: ${plateLamp.name}.`;
+  return availability?.found
+    ? `${base} ${availability.message}`
+    : `${base} В таблице наличия для этого плафона совпадений не найдено.`;
 }
 
 export default async function handler(req, res) {
@@ -135,7 +183,8 @@ export default async function handler(req, res) {
   try {
     const parts = [
       { key: 'radio', description: AI_RADIO_DESC },
-      { key: 'handle', description: AI_HANDLE_DESC }
+      { key: 'handle', description: AI_HANDLE_DESC },
+      { key: 'plate_lamp', description: AI_LAMP_DESC }
     ];
     let ai = await findVehiclePartsViaAI(vin, parts, { deadline });
 
@@ -164,6 +213,9 @@ export default async function handler(req, res) {
     const trunkHandles = ai?.parts?.handle?.oem
       ? [{ oem: ai.parts.handle.oem, name: ai.parts.handle.part_name }]
       : [];
+    const plateLamp = ai?.parts?.plate_lamp?.oem
+      ? { oem: ai.parts.plate_lamp.oem, name: ai.parts.plate_lamp.part_name, crossReferences: ai.parts.plate_lamp.cross_references }
+      : null;
 
     if (!radio) {
       return res.json({
@@ -176,16 +228,36 @@ export default async function handler(req, res) {
     }
 
     const platform = detectPlatform(radio.oem);
+    const { isStandardStated } = classifyHeadunitType(headunit_type);
+    // ИСПРАВЛЕНО 26.09.2026: раньше плафон проверялся ТОЛЬКО когда headunit_type явно распознан
+    // как нештатная/Android — если параметр не дошёл до вебхука вообще (реальный прод-случай,
+    // см. комментарий в resolveCameraVariant выше), альтернатива через плафон молча пропадала
+    // точно так же, как пропадала android-ссылка по ручке. Теперь проверяем её всегда, кроме
+    // случая, когда клиент явно подтвердил штатную магнитолу (плафон для штатной не актуален).
+    const showPlateLampAlternative = !isStandardStated;
 
-    const availability = await matchOemAgainstSheets({
-      oe: radio.oem,
-      sheetNames: ALL_AVAILABILITY_SHEETS,
-      deadline
-    });
-
-    const cameraVariants = trunkHandles.length
-      ? await findVagCameraVariants({ handleOe: trunkHandles[0].oem, deadline })
-      : null;
+    // Эти 3 обращения к таблицам независимы друг от друга (разные OE, разные листы) — раньше шли
+    // последовательно (await один за другим), добавляя лишние секунды к уже тугому тайм-бюджету
+    // запроса. Promise.all — общее время теперь равно самому медленному из трёх, а не сумме всех.
+    const [availability, cameraVariants, plateLampAvailability] = await Promise.all([
+      matchOemAgainstSheets({
+        oe: radio.oem,
+        crossReferences: ai.parts.radio.cross_references,
+        sheetNames: ALL_AVAILABILITY_SHEETS,
+        deadline
+      }),
+      trunkHandles.length
+        ? findVagCameraVariants({ handleOe: trunkHandles[0].oem, deadline })
+        : Promise.resolve(null),
+      plateLamp && showPlateLampAlternative
+        ? matchOemAgainstSheets({
+            oe: plateLamp.oem,
+            crossReferences: plateLamp.crossReferences,
+            sheetNames: ALL_AVAILABILITY_SHEETS,
+            deadline
+          })
+        : Promise.resolve(null)
+    ]);
 
     const cameraVariant = resolveCameraVariant(cameraVariants, { platform, headunitType: headunit_type });
 
@@ -196,6 +268,8 @@ export default async function handler(req, res) {
       platform,
       trunk_handle_variants: trunkHandles.map(h => ({ oem: h.oem, part_name: h.name })),
       camera_variant: cameraVariant,
+      plate_lamp: plateLamp ? { oem: plateLamp.oem, part_name: plateLamp.name } : null,
+      plate_lamp_availability: plateLampAvailability,
       headunit_type: headunit_type ?? null,
       source: 'ai',
       availability,
@@ -207,6 +281,7 @@ export default async function handler(req, res) {
           ? `Ручка/кнопка багажника: ${trunkHandles[0].name}`
           : 'Ручка/кнопка багажника не определена.',
         formatCameraVariant(cameraVariant),
+        showPlateLampAlternative ? formatPlateLampOption(plateLamp, plateLampAvailability) : null,
         headunit_type ? `Тип магнитолы клиента (со слов клиента): ${headunit_type}.` : null
       ].filter(Boolean).join('\n')
     });
