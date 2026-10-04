@@ -6,12 +6,20 @@ const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/i;
 
 const AI_PART_DESC = 'камера переднего вида для штатной мультимедийной системы (не декоративная накладка/кожух/кронштейн — сама камера с видеосигналом)';
 
+// ИСПРАВЛЕНО 04.10.2026: found:false раньше не содержал oem/part_name/source/availability —
+// реальный прод-случай (check-camera.js, тот же баг) показал, что Savvy падает с "Путь до
+// переменной (JSONPath) не найден", если её action настроен на эти поля. Теперь они всегда
+// присутствуют (null), даже когда деталь не найдена.
+const EMPTY_FIELDS = { oem: null, part_name: null, source: null, availability: null };
+
 export default async function handler(req, res) {
   const { vin } = req.body ?? {};
 
   if (!vin || !VIN_RE.test(vin)) {
     return res.json({
       found: false,
+      car_name: null,
+      ...EMPTY_FIELDS,
       message: 'Некорректный VIN. Проверьте — 17 латинских символов без букв I, O, Q.'
     });
   }
@@ -33,6 +41,7 @@ export default async function handler(req, res) {
       return res.json({
         found: false,
         car_name: carName,
+        ...EMPTY_FIELDS,
         message: carName
           ? 'Камера переднего вида для этого автомобиля не найдена.'
           : 'Не удалось определить автомобиль по этому VIN.'
@@ -60,6 +69,6 @@ export default async function handler(req, res) {
     });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ found: false, message: 'Технический сбой. Попробуйте позже.' });
+    return res.status(500).json({ found: false, car_name: null, ...EMPTY_FIELDS, message: 'Технический сбой. Попробуйте позже.' });
   }
 }

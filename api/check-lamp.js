@@ -1,10 +1,17 @@
 import { matchOemAgainstSheets } from '../lib/ai-match.js';
 import { findVehiclePartsViaAI } from '../lib/ai-vin-lookup.js';
 import { ALL_AVAILABILITY_SHEETS } from '../lib/sheets.js';
+import { isVagBrand, resolveVagScenario } from '../lib/vag-scenario.js';
 
 const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/i;
 
 const AI_PART_DESC = 'плафон подсветки заднего номерного знака (не плафон освещения салона)';
+
+// ИСПРАВЛЕНО 04.10.2026: 2 реальных прод-случая — (1) Savvy вызвала generic-вебхук для
+// машины концерна ВАГ вместо check_vag; (2) found:false не содержал plate_lamp/source/
+// availability — Savvy падала с "Путь до переменной (JSONPath) не найден". См. комментарий
+// в check-camera.js, тот же фикс.
+const EMPTY_FIELDS = { plate_lamp: null, source: null, availability: null };
 
 export default async function handler(req, res) {
   const { vin } = req.body ?? {};
@@ -12,6 +19,8 @@ export default async function handler(req, res) {
   if (!vin || !VIN_RE.test(vin)) {
     return res.json({
       found: false,
+      car_name: null,
+      ...EMPTY_FIELDS,
       message: 'Некорректный VIN. Проверьте — 17 латинских символов без букв I, O, Q.'
     });
   }
@@ -25,6 +34,12 @@ export default async function handler(req, res) {
   try {
     const ai = await findVehiclePartsViaAI(vin, [{ key: 'plate_lamp', description: AI_PART_DESC }], { deadline });
     const carName = ai?.carName;
+
+    if (carName && isVagBrand(carName)) {
+      const vagResult = await resolveVagScenario(vin, { headunit_type: undefined, deadline });
+      return res.json({ ...EMPTY_FIELDS, ...vagResult });
+    }
+
     const plate = ai?.parts?.plate_lamp?.oem
       ? { oem: ai.parts.plate_lamp.oem, name: ai.parts.plate_lamp.part_name }
       : null;
@@ -33,6 +48,7 @@ export default async function handler(req, res) {
       return res.json({
         found: false,
         car_name: carName,
+        ...EMPTY_FIELDS,
         message: carName
           ? 'Плафон подсветки номера для этого автомобиля не найден.'
           : 'Не удалось определить автомобиль по этому VIN.'
@@ -59,6 +75,6 @@ export default async function handler(req, res) {
     });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ found: false, message: 'Технический сбой. Попробуйте позже.' });
+    return res.status(500).json({ found: false, car_name: null, ...EMPTY_FIELDS, message: 'Технический сбой. Попробуйте позже.' });
   }
 }
